@@ -1228,4 +1228,242 @@ We'll create a program with several threads, each representing a process that re
 4. **Error Handling and Recovery:**
    - Implement robust error handling for scenarios like failing to allocate resources or detecting potential deadlocks.
 
+Let's explore **handling starvation** and **implementing fairness policies** in the context of the multithreaded Banker’s Algorithm. Starvation occurs when a process is perpetually denied the resources it needs to proceed, often because other processes keep getting priority.
 
+### **Handling Starvation and Implementing Fairness**
+
+To prevent starvation and ensure fairness, we can implement mechanisms that ensure every process eventually gets the resources it needs. Here are a few strategies:
+
+1. **FIFO (First In, First Out) Queue:**
+   - Use a queue to manage resource requests in the order they are made. This ensures that the first process to request resources will be the first to be considered, preventing newer processes from repeatedly cutting in line.
+
+2. **Aging:**
+   - Increase the priority of a process the longer it waits. This ensures that processes that have been waiting for a long time gradually get higher priority, reducing the likelihood of starvation.
+
+3. **Priority Inversion Handling:**
+   - Allow lower-priority processes to temporarily inherit a higher priority if they hold resources needed by a higher-priority process.
+
+Let’s modify our existing program to include a FIFO queue and aging mechanism.
+
+### **Implementing a FIFO Queue with Aging**
+
+#### **Step 1: Modify the Program to Include a FIFO Queue**
+
+We will implement a simple FIFO queue and aging mechanism. Processes will be added to the queue when they request resources, and the oldest request will be handled first.
+
+1. **Create a New `.c` File:**  
+   - Add a new C file to your project, name it `bankers_fairness.c`.
+
+2. **Write the Code:**
+
+   ```c
+   #include <stdio.h>
+   #include <stdlib.h>
+   #include <windows.h>
+
+   #define P 5  // Number of processes (threads)
+   #define R 3  // Number of resources
+
+   int available[R] = {3, 3, 2};  // Available resources
+   int maximum[P][R] = {{7, 5, 3}, {3, 2, 2}, {9, 0, 2}, {2, 2, 2}, {4, 3, 3}};
+   int allocation[P][R] = {{0, 1, 0}, {2, 0, 0}, {3, 0, 2}, {2, 1, 1}, {0, 0, 2}};
+   int need[P][R];
+
+   HANDLE mutex;
+   HANDLE queueMutex;
+
+   int requestQueue[P];  // FIFO queue of process IDs
+   int queueCount = 0;
+
+   // Function to calculate need matrix
+   void calculateNeed() {
+       for (int i = 0; i < P; i++)
+           for (int j = 0; j < R; j++)
+               need[i][j] = maximum[i][j] - allocation[i][j];
+   }
+
+   // Function to check if the system is in a safe state
+   int isSafe() {
+       int work[R];
+       int finish[P] = {0};
+       for (int i = 0; i < R; i++)
+           work[i] = available[i];
+
+       int count = 0;
+       while (count < P) {
+           int found = 0;
+           for (int p = 0; p < P; p++) {
+               if (finish[p] == 0) {
+                   int j;
+                   for (j = 0; j < R; j++)
+                       if (need[p][j] > work[j])
+                           break;
+                   if (j == R) {
+                       for (int k = 0; k < R; k++)
+                           work[k] += allocation[p][k];
+                       finish[p] = 1;
+                       found = 1;
+                       count++;
+                   }
+               }
+           }
+           if (found == 0) {
+               return 0;
+           }
+       }
+       return 1;
+   }
+
+   // Function to add a process to the request queue
+   void enqueue(int p) {
+       WaitForSingleObject(queueMutex, INFINITE);
+       requestQueue[queueCount++] = p;
+       ReleaseMutex(queueMutex);
+   }
+
+   // Function to dequeue a process from the request queue
+   int dequeue() {
+       WaitForSingleObject(queueMutex, INFINITE);
+       int p = requestQueue[0];
+       for (int i = 0; i < queueCount - 1; i++) {
+           requestQueue[i] = requestQueue[i + 1];
+       }
+       queueCount--;
+       ReleaseMutex(queueMutex);
+       return p;
+   }
+
+   // Thread function for a process requesting resources
+   DWORD WINAPI processThread(LPVOID lpParam) {
+       int p = (int)lpParam;
+       enqueue(p);
+
+       while (1) {
+           Sleep(rand() % 5);  // Simulate time between resource requests
+           int request[R];
+           for (int i = 0; i < R; i++)
+               request[i] = rand() % (need[p][i] + 1);
+
+           // Request resources
+           WaitForSingleObject(mutex, INFINITE);
+
+           // Ensure it's this process's turn to request
+           if (p != requestQueue[0]) {
+               ReleaseMutex(mutex);
+               continue;
+           }
+
+           printf("Process %d requesting resources: ", p);
+           for (int i = 0; i < R; i++)
+               printf("%d ", request[i]);
+           printf("\n");
+
+           int canAllocate = 1;
+           for (int i = 0; i < R; i++) {
+               if (request[i] > available[i]) {
+                   canAllocate = 0;
+                   break;
+               }
+           }
+
+           if (canAllocate) {
+               for (int i = 0; i < R; i++) {
+                   available[i] -= request[i];
+                   allocation[p][i] += request[i];
+                   need[p][i] -= request[i];
+               }
+               if (isSafe()) {
+                   printf("Process %d allocated resources\n", p);
+                   dequeue();  // Remove the process from the queue
+               } else {
+                   for (int i = 0; i < R; i++) {
+                       available[i] += request[i];
+                       allocation[p][i] -= request[i];
+                       need[p][i] += request[i];
+                   }
+                   printf("Process %d must wait, resources not safe to allocate\n", p);
+               }
+           } else {
+               printf("Process %d must wait, resources not available\n", p);
+           }
+
+           ReleaseMutex(mutex);
+           Sleep(rand() % 5);  // Simulate time before releasing resources
+
+           // Release resources (for simplicity, we release the same amount as requested)
+           WaitForSingleObject(mutex, INFINITE);
+           printf("Process %d releasing resources: ", p);
+           for (int i = 0; i < R; i++) {
+               available[i] += request[i];
+               allocation[p][i] -= request[i];
+               need[p][i] += request[i];
+               printf("%d ", request[i]);
+           }
+           printf("\n");
+           ReleaseMutex(mutex);
+       }
+       return 0;
+   }
+
+   int main() {
+       HANDLE threads[P];
+       DWORD ThreadID[P];
+
+       calculateNeed();
+       mutex = CreateMutex(NULL, FALSE, NULL);
+       queueMutex = CreateMutex(NULL, FALSE, NULL);
+
+       for (int i = 0; i < P; i++) {
+           threads[i] = CreateThread(NULL, 0, processThread, (LPVOID)i, 0, &ThreadID[i]);
+       }
+
+       WaitForMultipleObjects(P, threads, TRUE, INFINITE);
+
+       for (int i = 0; i < P; i++) {
+           CloseHandle(threads[i]);
+       }
+
+       CloseHandle(mutex);
+       CloseHandle(queueMutex);
+
+       return 0;
+   }
+   ```
+
+### **Step 2: Understanding the Code**
+
+1. **FIFO Queue:**
+   - The FIFO queue (`requestQueue`) ensures that processes are served in the order they request resources. This prevents newer processes from overtaking older ones in the queue.
+
+2. **Queue Management:**
+   - **`enqueue(int p)`**: Adds a process to the queue.
+   - **`dequeue()`**: Removes the process from the front of the queue when its resource request is granted.
+
+3. **Process Thread:**
+   - Each process thread first enqueues itself when it starts. It then repeatedly checks if it’s at the front of the queue before making a resource request. If the request is granted, it dequeues itself.
+
+4. **Fairness:**
+   - This setup ensures fairness, as each process must wait its turn in the queue. This minimizes the risk of starvation, as all processes will eventually be at the front of the queue and have their resource requests considered.
+
+### **Step 3: Running the Program**
+
+1. **Build and Run:**
+   - Build and run the program as before.
+   - You will see that the processes take turns requesting and releasing resources, respecting the order in which they enqueued their requests.
+
+### **Advanced Fairness Mechanisms**
+
+1. **Aging Mechanism:**
+   - You could extend this example by implementing an aging mechanism where a process that has been waiting for a long time gets its priority increased, reducing the chance of starvation.
+
+2. **Dynamic Priority Adjustments:**
+   - You could also dynamically adjust process priorities based on factors like the amount of resources already allocated or the total wait time, to further ensure fairness.
+
+3. **Complex Queue Structures:**
+   - For more complex systems, consider implementing priority queues or multiple queues for different resource types.
+
+### **Conclusion**
+
+By implementing a
+
+ FIFO queue and potential aging mechanisms, you can significantly reduce the risk of starvation in your multithreaded programs. This ensures that all processes eventually get the resources they need, promoting fairness in resource allocation.

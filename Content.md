@@ -177,7 +177,7 @@ By mastering these debugging techniques, you’ll be able to find and fix errors
 
 Let's try debugging a more complex program. We'll write a small C program that calculates the factorial of a number using a loop, and then we'll debug it to explore how breakpoints and stepping through the code can help us understand the program's flow and catch any errors.
 
-### **Factorial Program Example**
+### **5. Factorial Program Example**
 
 Here’s a simple program to calculate the factorial of a number:
 
@@ -253,7 +253,7 @@ int main() {
 
 It sounds like you're ready to dive deeper! Let's explore another useful feature in Visual Studio: **Watch Window** and **Conditional Breakpoints**. These tools are especially handy for tracking specific variables and controlling when the debugger pauses.
 
-### **Using the Watch Window**
+### **6. Using the Watch Window**
 
 The Watch Window allows you to monitor variables or expressions as your program runs. This is helpful when you want to keep an eye on specific values throughout the execution of your program.
 
@@ -316,7 +316,7 @@ Optimizing code means improving its performance, making it run faster, use less 
 3. **Simplify Expressions:**
    - Combine or simplify complex expressions to reduce the number of operations. For instance, instead of recalculating values inside a loop, calculate them once before the loop starts.
 
-### **Using Profiling Tools in Visual Studio**
+### **7. Using Profiling Tools in Visual Studio**
 
 Profiling tools help you analyze the performance of your program by measuring how much time is spent in different parts of the code. This can help you identify and optimize performance bottlenecks.
 

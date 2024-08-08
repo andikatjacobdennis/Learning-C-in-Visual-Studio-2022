@@ -1464,6 +1464,245 @@ We will implement a simple FIFO queue and aging mechanism. Processes will be add
 
 ### **Conclusion**
 
-By implementing a
+By implementing a FIFO queue and potential aging mechanisms, you can significantly reduce the risk of starvation in your multithreaded programs. This ensures that all processes eventually get the resources they need, promoting fairness in resource allocation.
 
- FIFO queue and potential aging mechanisms, you can significantly reduce the risk of starvation in your multithreaded programs. This ensures that all processes eventually get the resources they need, promoting fairness in resource allocation.
+Let's implement an **aging mechanism** in our multithreaded Banker’s Algorithm example. The goal of aging is to prevent starvation by gradually increasing the priority of processes that have been waiting for a long time. This ensures that every process eventually gets its turn, even if higher-priority processes keep making requests.
+
+### **Implementing an Aging Mechanism**
+
+We’ll modify the program to increase the priority of each process as it waits in the queue. The longer a process waits, the higher its priority becomes, eventually allowing it to jump ahead in the queue.
+
+### **Step 1: Modify the Program to Include Aging**
+
+1. **Create a New `.c` File:**  
+   - Add a new C file to your project, name it `bankers_aging.c`.
+
+2. **Write the Code:**
+
+   ```c
+   #include <stdio.h>
+   #include <stdlib.h>
+   #include <windows.h>
+
+   #define P 5  // Number of processes (threads)
+   #define R 3  // Number of resources
+
+   int available[R] = {3, 3, 2};  // Available resources
+   int maximum[P][R] = {{7, 5, 3}, {3, 2, 2}, {9, 0, 2}, {2, 2, 2}, {4, 3, 3}};
+   int allocation[P][R] = {{0, 1, 0}, {2, 0, 0}, {3, 0, 2}, {2, 1, 1}, {0, 0, 2}};
+   int need[P][R];
+
+   HANDLE mutex;
+   HANDLE queueMutex;
+
+   int requestQueue[P];  // FIFO queue of process IDs
+   int queueCount = 0;
+   int waitTime[P] = {0};  // Track how long each process has waited
+
+   // Function to calculate need matrix
+   void calculateNeed() {
+       for (int i = 0; i < P; i++)
+           for (int j = 0; j < R; j++)
+               need[i][j] = maximum[i][j] - allocation[i][j];
+   }
+
+   // Function to check if the system is in a safe state
+   int isSafe() {
+       int work[R];
+       int finish[P] = {0};
+       for (int i = 0; i < R; i++)
+           work[i] = available[i];
+
+       int count = 0;
+       while (count < P) {
+           int found = 0;
+           for (int p = 0; p < P; p++) {
+               if (finish[p] == 0) {
+                   int j;
+                   for (j = 0; j < R; j++)
+                       if (need[p][j] > work[j])
+                           break;
+                   if (j == R) {
+                       for (int k = 0; k < R; k++)
+                           work[k] += allocation[p][k];
+                       finish[p] = 1;
+                       found = 1;
+                       count++;
+                   }
+               }
+           }
+           if (found == 0) {
+               return 0;
+           }
+       }
+       return 1;
+   }
+
+   // Function to add a process to the request queue
+   void enqueue(int p) {
+       WaitForSingleObject(queueMutex, INFINITE);
+       requestQueue[queueCount++] = p;
+       ReleaseMutex(queueMutex);
+   }
+
+   // Function to dequeue a process from the request queue
+   int dequeue() {
+       WaitForSingleObject(queueMutex, INFINITE);
+       int p = requestQueue[0];
+       for (int i = 0; i < queueCount - 1; i++) {
+           requestQueue[i] = requestQueue[i + 1];
+       }
+       queueCount--;
+       ReleaseMutex(queueMutex);
+       return p;
+   }
+
+   // Function to adjust the queue based on wait times (aging mechanism)
+   void adjustQueueForAging() {
+       WaitForSingleObject(queueMutex, INFINITE);
+       for (int i = 0; i < queueCount; i++) {
+           waitTime[requestQueue[i]]++;
+           if (i > 0 && waitTime[requestQueue[i]] > waitTime[requestQueue[i - 1]]) {
+               // Swap processes to move the older one up
+               int temp = requestQueue[i];
+               requestQueue[i] = requestQueue[i - 1];
+               requestQueue[i - 1] = temp;
+           }
+       }
+       ReleaseMutex(queueMutex);
+   }
+
+   // Thread function for a process requesting resources
+   DWORD WINAPI processThread(LPVOID lpParam) {
+       int p = (int)lpParam;
+       enqueue(p);
+
+       while (1) {
+           Sleep(rand() % 5);  // Simulate time between resource requests
+           int request[R];
+           for (int i = 0; i < R; i++)
+               request[i] = rand() % (need[p][i] + 1);
+
+           adjustQueueForAging();
+
+           // Request resources
+           WaitForSingleObject(mutex, INFINITE);
+
+           // Ensure it's this process's turn to request
+           if (p != requestQueue[0]) {
+               ReleaseMutex(mutex);
+               continue;
+           }
+
+           printf("Process %d requesting resources: ", p);
+           for (int i = 0; i < R; i++)
+               printf("%d ", request[i]);
+           printf("\n");
+
+           int canAllocate = 1;
+           for (int i = 0; i < R; i++) {
+               if (request[i] > available[i]) {
+                   canAllocate = 0;
+                   break;
+               }
+           }
+
+           if (canAllocate) {
+               for (int i = 0; i < R; i++) {
+                   available[i] -= request[i];
+                   allocation[p][i] += request[i];
+                   need[p][i] -= request[i];
+               }
+               if (isSafe()) {
+                   printf("Process %d allocated resources\n", p);
+                   dequeue();  // Remove the process from the queue
+                   waitTime[p] = 0;  // Reset wait time after allocation
+               } else {
+                   for (int i = 0; i < R; i++) {
+                       available[i] += request[i];
+                       allocation[p][i] -= request[i];
+                       need[p][i] += request[i];
+                   }
+                   printf("Process %d must wait, resources not safe to allocate\n", p);
+               }
+           } else {
+               printf("Process %d must wait, resources not available\n", p);
+           }
+
+           ReleaseMutex(mutex);
+           Sleep(rand() % 5);  // Simulate time before releasing resources
+
+           // Release resources (for simplicity, we release the same amount as requested)
+           WaitForSingleObject(mutex, INFINITE);
+           printf("Process %d releasing resources: ", p);
+           for (int i = 0; i < R; i++) {
+               available[i] += request[i];
+               allocation[p][i] -= request[i];
+               need[p][i] += request[i];
+               printf("%d ", request[i]);
+           }
+           printf("\n");
+           ReleaseMutex(mutex);
+       }
+       return 0;
+   }
+
+   int main() {
+       HANDLE threads[P];
+       DWORD ThreadID[P];
+
+       calculateNeed();
+       mutex = CreateMutex(NULL, FALSE, NULL);
+       queueMutex = CreateMutex(NULL, FALSE, NULL);
+
+       for (int i = 0; i < P; i++) {
+           threads[i] = CreateThread(NULL, 0, processThread, (LPVOID)i, 0, &ThreadID[i]);
+       }
+
+       WaitForMultipleObjects(P, threads, TRUE, INFINITE);
+
+       for (int i = 0; i < P; i++) {
+           CloseHandle(threads[i]);
+       }
+
+       CloseHandle(mutex);
+       CloseHandle(queueMutex);
+
+       return 0;
+   }
+   ```
+
+### **Step 2: Understanding the Code**
+
+1. **Wait Time Tracking:**
+   - **`waitTime[]`**: An array that tracks how long each process has been waiting in the queue.
+
+2. **Aging Mechanism:**
+   - **`adjustQueueForAging()`**: This function increases the `waitTime` for each process in the queue and adjusts the queue based on the wait times. If a process has waited longer than the one before it, they are swapped to move the older process closer to the front of the queue.
+
+3. **Process Thread:**
+   - Each process thread continues to operate as before, but now the queue is periodically adjusted based on the aging mechanism to ensure fairness.
+
+4. **Fairness and Starvation Prevention:**
+   - The aging mechanism ensures that processes waiting too long eventually get higher priority, reducing the likelihood of starvation.
+
+### **Step 3: Running the Program**
+
+1. **Build and Run:**
+   - Build and run the program.
+   - You will see that processes still take turns requesting and releasing resources, but now older processes have a better chance of being served earlier due to the aging mechanism.
+
+### **Advanced Aging and Fairness Mechanisms**
+
+1. **Dynamic Aging Rates:**
+   - Implement dynamic aging rates where processes accumulate "age" faster under certain conditions, like high resource contention.
+
+2. **Priority Inversion Handling:**
+   - In scenarios where lower-priority processes hold resources needed by higher-priority processes, implement priority inheritance to temporarily boost the priority of the lower-priority process.
+
+3. **Multiple Queues with Aging:**
+   - For systems with multiple types of resources or processes with different priority levels, consider implementing multiple queues with separate aging mechanisms.
+
+### **Conclusion**
+
+By adding an aging mechanism to the FIFO queue, we've improved fairness and reduced the risk of starvation. This approach ensures that all processes eventually get the resources they need, even in a busy, multithreaded environment.
